@@ -1,0 +1,629 @@
+import chalk from 'chalk';
+import path from 'path';
+import os from 'os';
+import { execSync, spawnSync } from 'child_process';
+import {
+  getInstances,
+  getInstance,
+  addInstance,
+  removeInstance as removeInstanceMetadata,
+  getNextPort,
+  getInstanceGatewayToken,
+  setInstanceGatewayPort,
+  enableBrowserTool,
+  enableBrowserTakeover
+} from './metadata.js';
+import {
+  isDockerRunning,
+  isDockerInstalled,
+  imageExists,
+  getContainerStatus,
+  createContainer,
+  execInContainer,
+  stopContainer,
+  startContainer,
+  removeContainer,
+  showLogs,
+  buildBaseImage,
+  ensureNetwork,
+  startVnc,
+  startVisibleChrome,
+  stopVisibleChrome
+} from './docker.js';
+import { selectInstance, promptInstanceName, confirm } from './selector.js';
+
+// Management commands handled by openclaw-swarm itself
+const MANAGEMENT_COMMANDS = ['list', 'remove', 'stop', 'start', 'logs', 'build', 'cleanup'];
+
+// CLI entry point
+export async function cli(args) {
+  const command = args[0];
+
+  // init runs its own Docker checks — must come before the global Docker running check
+  if (command === 'init') {
+    return await initCommand();
+  }
+
+  // Check Docker
+  if (!isDockerRunning()) {
+    console.error(chalk.red('✗ Docker is not running. Please start Docker Desktop.'));
+    process.exit(1);
+  }
+  
+  // Management commands
+  if (command === 'list') {
+    return await listInstances();
+  }
+  
+  if (command === 'remove') {
+    const name = args[1];
+    if (!name) {
+      console.error(chalk.red('✗ Please specify instance name'));
+      process.exit(1);
+    }
+    return await removeInstanceCommand(name);
+  }
+  
+  if (command === 'stop') {
+    const name = args[1];
+    if (!name) {
+      console.error(chalk.red('✗ Please specify instance name'));
+      process.exit(1);
+    }
+    return await stopInstanceCommand(name);
+  }
+  
+  if (command === 'start') {
+    const name = args[1];
+    if (!name) {
+      console.error(chalk.red('✗ Please specify instance name'));
+      process.exit(1);
+    }
+    return await startInstanceCommand(name);
+  }
+  
+  if (command === 'logs') {
+    const name = args[1];
+    const follow = args.includes('-f') || args.includes('--follow');
+    if (!name) {
+      console.error(chalk.red('✗ Please specify instance name'));
+      process.exit(1);
+    }
+    return await showLogsCommand(name, follow);
+  }
+  
+  if (command === 'build') {
+    return await buildCommand();
+  }
+
+  if (command === 'cleanup') {
+    return await cleanupCommand();
+  }
+
+  if (command === 'browser') {
+    if (args[1] === 'stop') {
+      return await browserStopCommand(args[2]);
+    }
+    return await browserCommand(args[1]);
+  }
+  
+  // All other commands: route to OpenClaw in container
+  const detach = args.includes('-d') || args.includes('--detach');
+  const filteredArgs = args.filter(a => a !== '-d' && a !== '--detach');
+  return await proxyOpenClawCommand(filteredArgs, detach);
+}
+
+// Smart first-time setup wizard
+async function initCommand() {
+  console.log(chalk.blue.bold('\n🦞 OpenClaw Swarm — Setup Wizard\n'));
+
+  // ── Step 1: Docker installed? ─────────────────────────────────────────────
+  console.log(chalk.bold('Step 1/5  Check Docker is installed'));
+  if (!isDockerInstalled()) {
+    console.log(chalk.yellow('  Docker not found. Installing...\n'));
+    try {
+      if (process.platform === 'darwin') {
+        // Check for Homebrew
+        try {
+          execSync('which brew', { stdio: 'ignore' });
+        } catch {
+          console.log(chalk.red('  Homebrew is required to auto-install Docker on macOS.'));
+          console.log(chalk.yellow('  Install Homebrew first: https://brew.sh'));
+          console.log(chalk.yellow('  Then re-run: openclaw-swarm init\n'));
+          process.exit(1);
+        }
+        execSync('brew install --cask docker', { stdio: 'inherit' });
+      } else if (process.platform === 'linux') {
+        // Try apt, fall back to yum
+        try {
+          execSync('which apt-get', { stdio: 'ignore' });
+          execSync('sudo apt-get update && sudo apt-get install -y docker.io', { stdio: 'inherit' });
+          execSync('sudo systemctl start docker && sudo systemctl enable docker', { stdio: 'inherit' });
+        } catch {
+          execSync('sudo yum install -y docker', { stdio: 'inherit' });
+          execSync('sudo systemctl start docker && sudo systemctl enable docker', { stdio: 'inherit' });
+        }
+      } else {
+        console.log(chalk.yellow('  Auto-install is not supported on Windows.'));
+        console.log(chalk.yellow('  Download Docker Desktop: https://docs.docker.com/desktop/windows/'));
+        console.log(chalk.yellow('  Then re-run: openclaw-swarm init\n'));
+        process.exit(1);
+      }
+      console.log(chalk.green('  ✓ Docker installed\n'));
+    } catch (err) {
+      console.error(chalk.red(`  ✗ Failed to install Docker: ${err.message}`));
+      process.exit(1);
+    }
+  } else {
+    console.log(chalk.green('  ✓ Docker is installed\n'));
+  }
+
+  // ── Step 2: Docker running? ───────────────────────────────────────────────
+  console.log(chalk.bold('Step 2/5  Check Docker is running'));
+  if (!isDockerRunning()) {
+    console.log(chalk.yellow('  Docker is not running. Starting it...'));
+    if (process.platform === 'darwin') {
+      try { execSync('open -a Docker', { stdio: 'ignore' }); } catch {}
+    } else if (process.platform === 'linux') {
+      try { execSync('sudo systemctl start docker', { stdio: 'ignore' }); } catch {}
+    } else if (process.platform === 'win32') {
+      try { execSync('start "" "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"', { stdio: 'ignore' }); } catch {}
+    }
+    // Poll until Docker is ready (up to 60s)
+    let ready = false;
+    for (let i = 0; i < 20; i++) {
+      if (isDockerRunning()) { ready = true; break; }
+      process.stdout.write(chalk.dim(`  Waiting for Docker to start... ${(i + 1) * 3}s\r`));
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    if (!ready) {
+      console.error(chalk.red('\n  ✗ Docker did not start within 60s. Please start it manually and re-run init.'));
+      process.exit(1);
+    }
+    process.stdout.write('\n');
+  }
+  console.log(chalk.green('  ✓ Docker is running\n'));
+
+  // ── Step 3: Base image built? ─────────────────────────────────────────────
+  console.log(chalk.bold('Step 3/5  Build base Docker image'));
+  if (imageExists()) {
+    console.log(chalk.green('  ✓ Image already built, skipping\n'));
+  } else {
+    console.log(chalk.dim('  Building openclaw-swarm-base:latest (this takes a few minutes the first time)...\n'));
+    const ok = buildBaseImage();
+    if (!ok) {
+      console.error(chalk.red('  ✗ Image build failed'));
+      process.exit(1);
+    }
+    console.log(chalk.green('  ✓ Image built\n'));
+  }
+
+  // ── Step 4: Onboard new instance ─────────────────────────────────────────
+  console.log(chalk.bold('Step 4/5  Set up OpenClaw instance'));
+  ensureNetwork();
+  console.log(chalk.dim('  Running OpenClaw onboarding wizard...\n'));
+  const instanceName = await promptInstanceName();
+  const port = getNextPort();
+  console.log(chalk.blue(`\n  Creating instance ${instanceName} on port ${port}...`));
+  addInstance(instanceName, port);
+  const created = createContainer(instanceName, port);
+  if (!created) {
+    console.error(chalk.red('  ✗ Failed to create container'));
+    removeInstanceMetadata(instanceName);
+    process.exit(1);
+  }
+  const instance = getInstance(instanceName);
+  await execInContainer(instance.container, 'openclaw onboard', false);
+  setInstanceGatewayPort(instanceName, instance.port);
+  enableBrowserTool(instanceName);
+  console.log(chalk.green(`\n  ✓ Instance ${instanceName} ready\n`));
+
+  // ── Step 5: Start gateway ─────────────────────────────────────────────────
+  console.log(chalk.bold('Step 5/5  Start gateway'));
+  const inst = getInstance(instanceName);
+
+  // Bootstrap Chrome then start gateway
+  stopVisibleChrome(inst.container);
+  startVisibleChrome(inst.container, 18800);
+  enableBrowserTakeover(instanceName);
+  setInstanceGatewayPort(instanceName, inst.port);
+  await execInContainer(inst.container, 'openclaw gateway --bind lan', true);
+  execSync('sleep 2', { stdio: 'ignore' });
+  console.log(chalk.green('  ✓ Gateway started\n'));
+
+  // ── Done ──────────────────────────────────────────────────────────────────
+  console.log(chalk.green.bold('✓ OpenClaw Swarm is ready!\n'));
+  console.log(chalk.blue('Next steps:'));
+  console.log(chalk.cyan(`  openclaw-swarm tui`) + chalk.dim('              # chat with your agent'));
+  console.log(chalk.cyan(`  openclaw-swarm browser`) + chalk.dim('          # open VNC to see/control the browser'));
+  console.log(chalk.cyan(`  openclaw-swarm dashboard`) + chalk.dim('        # open the web dashboard\n'));
+}
+
+// Show help
+function showHelp() {
+  console.log(`
+${chalk.blue.bold('OpenClaw Swarm')} - Docker orchestrator for multiple OpenClaw instances
+
+${chalk.yellow('Usage:')}
+  openclaw-swarm <command> [options]
+
+${chalk.yellow('OpenClaw Commands:')} (auto-selects instance)
+  onboard              Run OpenClaw onboarding wizard
+  gateway [-d]         Start OpenClaw gateway (-d for background)
+  tui                  Open OpenClaw TUI
+  channels             Manage channels
+  devices              Manage devices
+  dashboard            Open dashboard
+  ...                  Any other OpenClaw command
+
+${chalk.yellow('Setup:')}
+  init                 First-time setup wizard (installs Docker, builds image, onboards)
+
+${chalk.yellow('Management Commands:')}
+  list                 List all instances
+  remove <name>        Stop and remove instance
+  stop <name>          Stop instance
+  start <name>         Start instance
+  logs <name> [-f]     Show instance logs
+  build                Build Docker base image
+  cleanup              Remove all containers and reset metadata
+  browser [name]       Open VNC tab to see/control the agent's browser
+  browser stop [name]  Close VNC view (agent browser keeps running)
+
+${chalk.yellow('Examples:')}
+  openclaw-swarm onboard              # Select instance and run onboard
+  openclaw-swarm gateway -d           # Select instance and start gateway
+  openclaw-swarm list                 # List all instances
+  openclaw-swarm logs worker1 -f      # Follow logs for worker1
+`);
+}
+
+// Proxy OpenClaw command
+async function proxyOpenClawCommand(args, detach = false) {
+  let command = args.length > 0 ? args.join(' ') : 'onboard';
+  
+  // Select or create instance
+  const selected = await selectInstance(true);
+  
+  let instanceName;
+  if (selected === '__new__') {
+    instanceName = await promptInstanceName();
+    const port = getNextPort();
+    
+    console.log(chalk.blue(`\n📦 Creating instance ${instanceName} on port ${port}...`));
+    
+    // Ensure network exists
+    ensureNetwork();
+    
+    // Add to metadata
+    addInstance(instanceName, port);
+    
+    // Create container
+    const created = createContainer(instanceName, port);
+    if (!created) {
+      console.error(chalk.red('✗ Failed to create container'));
+      removeInstanceMetadata(instanceName);
+      process.exit(1);
+    }
+    
+    console.log(chalk.green(`✓ Created instance ${instanceName}`));
+  } else {
+    instanceName = selected;
+    const instance = getInstance(instanceName);
+    
+    // Check if container is running
+    const status = getContainerStatus(instance.container);
+    if (status === 'stopped') {
+      console.log(chalk.yellow(`⚠ Instance ${instanceName} is stopped. Starting...`));
+      startContainer(instance.container);
+    } else if (status === 'not-found') {
+      console.log(chalk.yellow(`⚠ Container not found. Recreating...`));
+      createContainer(instanceName, instance.port);
+    }
+  }
+  
+  // Execute OpenClaw command
+  const instance = getInstance(instanceName);
+
+  // Ensure gateway port in config matches host port
+  // Add --bind lan for gateway commands (required for Docker containers)
+  if (command.startsWith('gateway')) {
+    setInstanceGatewayPort(instanceName, instance.port);
+    // Add --bind lan if not already present (gateway must bind to 0.0.0.0 in container)
+    if (!command.includes('--bind')) {
+      command = command.replace(/^gateway/, 'gateway --bind lan');
+    }
+  }
+
+  // When starting gateway in background: bootstrap Chrome first so the browser tool
+  // is ready the moment the gateway comes up — no separate `browser` command needed.
+  // CDP port is always 18800 inside the container (mapped to host port+11 externally).
+  if (command.startsWith('gateway') && detach) {
+    stopVisibleChrome(instance.container);
+    startVisibleChrome(instance.container, 18800);
+    enableBrowserTakeover(instanceName);
+  }
+
+  if (detach) {
+    console.log(chalk.blue(`\n🦞 Starting in background: openclaw ${command}`));
+    console.log(chalk.dim(`Container: ${instance.container}\n`));
+    
+    try {
+      await execInContainer(instance.container, `openclaw ${command}`, true);
+      console.log(chalk.green(`✓ Command started in background`));
+      console.log(chalk.dim(`View logs: openclaw-swarm logs ${instanceName} -f`));
+    } catch (error) {
+      console.error(chalk.red(`\n✗ Command failed: ${error.message}`));
+      process.exit(1);
+    }
+  } else {
+    console.log(chalk.blue(`\n🦞 Running: openclaw ${command}`));
+    console.log(chalk.dim(`Container: ${instance.container}\n`));
+    
+    try {
+      await execInContainer(instance.container, `openclaw ${command}`, false);
+      if (command === 'onboard') {
+        setInstanceGatewayPort(instanceName, instance.port);
+        enableBrowserTool(instanceName);
+      }
+      if (command.startsWith('dashboard')) {
+        const token = getInstanceGatewayToken(instanceName);
+        const url = token
+          ? `http://localhost:${instance.port}/#token=${token}`
+          : `http://localhost:${instance.port}/`;
+        console.log(chalk.blue(`\n📌 Instance ${instanceName} → open on your machine:`));
+        console.log(chalk.cyan(`   ${url}`));
+      }
+    } catch (error) {
+      console.error(chalk.red(`\n✗ Command failed: ${error.message}`));
+      process.exit(1);
+    }
+  }
+}
+
+// Open live browser view via noVNC.
+// Instead of asking the gateway to launch Chrome (which has Playwright/GPU issues in Docker non-headless),
+// we launch Chrome ourselves on the Xvfb display and set attachOnly:true so the gateway just attaches
+// to our already-running Chrome via CDP. Both the agent and the user share the same browser session.
+async function browserCommand(name) {
+  let instanceName = name;
+
+  if (!instanceName) {
+    const selected = await selectInstance(false);
+    if (!selected || selected === '__new__') {
+      console.error(chalk.red('✗ No instance selected'));
+      process.exit(1);
+    }
+    instanceName = selected;
+  }
+
+  const instance = getInstance(instanceName);
+  if (!instance) {
+    console.error(chalk.red(`✗ Instance ${instanceName} not found`));
+    process.exit(1);
+  }
+
+  // Ensure container is running
+  const status = getContainerStatus(instance.container);
+  if (status === 'stopped') {
+    console.log(chalk.yellow(`⚠ Instance ${instanceName} is stopped. Starting...`));
+    startContainer(instance.container);
+  } else if (status === 'not-found') {
+    console.error(chalk.red(`✗ Container not found. Run: openclaw-swarm start ${instanceName}`));
+    process.exit(1);
+  }
+
+  // Check Xvfb is available — only present in containers built with the new image
+  let xvfbAvailable = false;
+  try {
+    const check = execSync(
+      `docker exec ${instance.container} sh -c "command -v Xvfb > /dev/null 2>&1 && echo yes || echo no"`,
+      { encoding: 'utf8' }
+    ).trim();
+    xvfbAvailable = check === 'yes';
+  } catch {}
+
+  if (!xvfbAvailable) {
+    console.error(chalk.red('\n✗ This container was built without VNC support.'));
+    console.error(chalk.yellow('  Rebuild the image and recreate the container:'));
+    console.error(chalk.dim(`\n    openclaw-swarm build`));
+    console.error(chalk.dim(`    openclaw-swarm cleanup`));
+    console.error(chalk.dim(`    openclaw-swarm onboard\n`));
+    process.exit(1);
+  }
+
+  console.log(chalk.blue(`\n🖥  Starting browser view for ${instanceName}...`));
+
+  // Chrome is already running (started by `gateway -d`). Just attach VNC services to the display.
+  console.log(chalk.dim('  Starting VNC services...'));
+  startVnc(instance.container);
+
+  const vncUrl = `http://localhost:${instance.port + 20}/vnc.html?autoconnect=true&reconnect=true`;
+
+  console.log(chalk.green(`\n✓ Browser view ready!`));
+  console.log(chalk.blue(`\n📌 Instance ${instanceName} → open on your machine:`));
+  console.log(chalk.cyan(`   ${vncUrl}`));
+  console.log(chalk.dim(`\n   You and the agent share the same Chrome session.`));
+  console.log(chalk.dim(`   Log in, solve captchas, or fill credentials — the agent picks it up automatically.`));
+  console.log(chalk.dim(`\n   When done: openclaw-swarm browser stop ${instanceName}\n`));
+
+  // Auto-open VNC tab
+  try {
+    const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    execSync(`${openCmd} "${vncUrl}"`, { stdio: 'ignore' });
+  } catch {}
+}
+
+// Restore normal headless mode — stop visible Chrome, re-enable headless, restart gateway
+async function browserStopCommand(name) {
+  let instanceName = name;
+
+  if (!instanceName) {
+    const selected = await selectInstance(false);
+    if (!selected || selected === '__new__') {
+      console.error(chalk.red('✗ No instance selected'));
+      process.exit(1);
+    }
+    instanceName = selected;
+  }
+
+  const instance = getInstance(instanceName);
+  if (!instance) {
+    console.error(chalk.red(`✗ Instance ${instanceName} not found`));
+    process.exit(1);
+  }
+
+  console.log(chalk.blue(`\n🔄 Stopping VNC view for ${instanceName}...`));
+
+  // Stop VNC services only — Chrome and gateway keep running so the agent can still use the browser
+  spawnSync('docker', ['exec', instance.container, 'pkill', '-f', 'websockify'], { stdio: 'pipe' });
+  spawnSync('docker', ['exec', instance.container, 'pkill', '-x', 'x11vnc'], { stdio: 'pipe' });
+
+  console.log(chalk.green(`\n✓ VNC stopped. Agent browser tool is still active.`));
+}
+
+// List instances
+async function listInstances() {
+  const instances = getInstances();
+  
+  if (Object.keys(instances).length === 0) {
+    console.log(chalk.yellow('No instances found. Run a command to create one!'));
+    return;
+  }
+  
+  console.log(chalk.blue.bold('\n📋 OpenClaw Instances:\n'));
+  
+  for (const [name, instance] of Object.entries(instances)) {
+    const status = getContainerStatus(instance.container);
+    const statusIcon = status === 'running' ? '🟢' : status === 'stopped' ? '🔴' : '⚪';
+    const statusColor = status === 'running' ? chalk.green : status === 'stopped' ? chalk.red : chalk.gray;
+    
+    console.log(`${statusIcon} ${chalk.bold(name)}`);
+    console.log(`  Port: ${instance.port}`);
+    console.log(`  Status: ${statusColor(status)}`);
+    console.log(`  Container: ${instance.container}`);
+    console.log(`  Created: ${new Date(instance.created).toLocaleString()}`);
+    if (status === 'running') {
+      console.log(`  Browser: ${chalk.cyan(`http://localhost:${instance.port + 20}/vnc.html?autoconnect=true`)}`);
+    }
+    console.log();
+  }
+}
+
+// Remove instance
+async function removeInstanceCommand(name) {
+  const instance = getInstance(name);
+  if (!instance) {
+    console.error(chalk.red(`✗ Instance ${name} not found`));
+    process.exit(1);
+  }
+  
+  const confirmed = await confirm(`Remove instance ${name}? This will delete all data.`);
+  if (!confirmed) {
+    console.log(chalk.yellow('Cancelled'));
+    return;
+  }
+  
+  console.log(chalk.blue(`Removing instance ${name}...`));
+  removeContainer(instance.container);
+  removeInstanceMetadata(name);
+  console.log(chalk.green(`✓ Removed instance ${name}`));
+}
+
+// Stop instance
+async function stopInstanceCommand(name) {
+  const instance = getInstance(name);
+  if (!instance) {
+    console.error(chalk.red(`✗ Instance ${name} not found`));
+    process.exit(1);
+  }
+  
+  console.log(chalk.blue(`Stopping instance ${name}...`));
+  stopContainer(instance.container);
+  console.log(chalk.green(`✓ Stopped instance ${name}`));
+}
+
+// Start instance
+async function startInstanceCommand(name) {
+  const instance = getInstance(name);
+  if (!instance) {
+    console.error(chalk.red(`✗ Instance ${name} not found`));
+    process.exit(1);
+  }
+  
+  console.log(chalk.blue(`Starting instance ${name}...`));
+  startContainer(instance.container);
+  console.log(chalk.green(`✓ Started instance ${name}`));
+}
+
+// Show logs
+async function showLogsCommand(name, follow) {
+  const instance = getInstance(name);
+  if (!instance) {
+    console.error(chalk.red(`✗ Instance ${name} not found`));
+    process.exit(1);
+  }
+  
+  showLogs(instance.container, follow);
+}
+
+// Build base image
+async function buildCommand() {
+  console.log(chalk.blue('Building Docker base image...'));
+  console.log(chalk.dim('This may take a few minutes on first build.\n'));
+  
+  const success = buildBaseImage();
+  if (success) {
+    console.log(chalk.green('\n✓ Build complete!'));
+  } else {
+    console.error(chalk.red('\n✗ Build failed'));
+    process.exit(1);
+  }
+}
+
+// Cleanup - remove all containers and reset metadata
+async function cleanupCommand() {
+  const confirmed = await confirm('Remove all OpenClaw instances and reset metadata?');
+  if (!confirmed) {
+    console.log(chalk.yellow('Cancelled'));
+    return;
+  }
+
+  console.log(chalk.blue('🧹 Cleaning up OpenClaw Swarm...\n'));
+
+  // Get all instances
+  const instances = getInstances();
+  const instanceNames = Object.keys(instances);
+
+  if (instanceNames.length > 0) {
+    console.log(chalk.dim('Stopping and removing containers...'));
+    for (const name of instanceNames) {
+      const instance = instances[name];
+      const status = getContainerStatus(instance.container);
+      if (status === 'running') {
+        stopContainer(instance.container);
+      }
+      if (status !== 'not-found') {
+        removeContainer(instance.container);
+      }
+    }
+  }
+
+  // Clear instance configs (but keep directory structure)
+  console.log(chalk.dim('Clearing instance configs...'));
+  const instancesDir = path.join(os.homedir(), '.openclaw-swarm', 'instances');
+  try {
+    // Remove all files in .openclaw subdirectories
+    execSync(`find "${instancesDir}" -mindepth 2 -type f -delete 2>/dev/null || true`, { stdio: 'ignore' });
+    // Remove empty subdirectories
+    execSync(`find "${instancesDir}" -mindepth 2 -type d -empty -delete 2>/dev/null || true`, { stdio: 'ignore' });
+  } catch (error) {
+    // Ignore errors (directory might not exist)
+  }
+
+  // Reset metadata
+  console.log(chalk.dim('Clearing metadata...'));
+  removeInstanceMetadata('__all__');  // Will clear in metadata module
+  
+  console.log(chalk.green('\n✅ Cleanup complete! Re-add instances with: openclaw-swarm onboard'));
+}
