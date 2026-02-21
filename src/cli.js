@@ -32,7 +32,7 @@ import {
 } from './docker.js';
 import { selectInstance, promptInstanceName, confirm } from './selector.js';
 
-// Management commands handled by openclaw-swarm itself
+// Management commands handled by openclaw-spawn itself
 const MANAGEMENT_COMMANDS = ['list', 'remove', 'stop', 'start', 'logs', 'build', 'cleanup'];
 
 // CLI entry point
@@ -129,7 +129,7 @@ async function initCommand() {
         } catch {
           console.log(chalk.red('  Homebrew is required to auto-install Docker on macOS.'));
           console.log(chalk.yellow('  Install Homebrew first: https://brew.sh'));
-          console.log(chalk.yellow('  Then re-run: openclaw-swarm init\n'));
+          console.log(chalk.yellow('  Then re-run: openclaw-spawn init\n'));
           process.exit(1);
         }
         execSync('brew install --cask docker', { stdio: 'inherit' });
@@ -146,7 +146,7 @@ async function initCommand() {
       } else {
         console.log(chalk.yellow('  Auto-install is not supported on Windows.'));
         console.log(chalk.yellow('  Download Docker Desktop: https://docs.docker.com/desktop/windows/'));
-        console.log(chalk.yellow('  Then re-run: openclaw-swarm init\n'));
+        console.log(chalk.yellow('  Then re-run: openclaw-spawn init\n'));
         process.exit(1);
       }
       console.log(chalk.green('  ✓ Docker installed\n'));
@@ -189,7 +189,7 @@ async function initCommand() {
   if (imageExists()) {
     console.log(chalk.green('  ✓ Image already built, skipping\n'));
   } else {
-    console.log(chalk.dim('  Building openclaw-swarm-base:latest (this takes a few minutes the first time)...\n'));
+    console.log(chalk.dim('  Building openclaw-spawn-base:latest (this takes a few minutes the first time)...\n'));
     const ok = buildBaseImage();
     if (!ok) {
       console.error(chalk.red('  ✗ Image build failed'));
@@ -234,9 +234,9 @@ async function initCommand() {
   // ── Done ──────────────────────────────────────────────────────────────────
   console.log(chalk.green.bold('✓ OpenClaw Swarm is ready!\n'));
   console.log(chalk.blue('Next steps:'));
-  console.log(chalk.cyan(`  openclaw-swarm tui`) + chalk.dim('              # chat with your agent'));
-  console.log(chalk.cyan(`  openclaw-swarm browser`) + chalk.dim('          # open VNC to see/control the browser'));
-  console.log(chalk.cyan(`  openclaw-swarm dashboard`) + chalk.dim('        # open the web dashboard\n'));
+  console.log(chalk.cyan(`  openclaw-spawn tui`) + chalk.dim('              # chat with your agent'));
+  console.log(chalk.cyan(`  openclaw-spawn browser`) + chalk.dim('          # open VNC to see/control the browser'));
+  console.log(chalk.cyan(`  openclaw-spawn dashboard`) + chalk.dim('        # open the web dashboard\n'));
 }
 
 // Show help
@@ -245,7 +245,7 @@ function showHelp() {
 ${chalk.blue.bold('OpenClaw Swarm')} - Docker orchestrator for multiple OpenClaw instances
 
 ${chalk.yellow('Usage:')}
-  openclaw-swarm <command> [options]
+  openclaw-spawn <command> [options]
 
 ${chalk.yellow('OpenClaw Commands:')} (auto-selects instance)
   onboard              Run OpenClaw onboarding wizard
@@ -271,10 +271,10 @@ ${chalk.yellow('Management Commands:')}
   browser stop [name]  Close VNC view (agent browser keeps running)
 
 ${chalk.yellow('Examples:')}
-  openclaw-swarm onboard              # Select instance and run onboard
-  openclaw-swarm gateway -d           # Select instance and start gateway
-  openclaw-swarm list                 # List all instances
-  openclaw-swarm logs worker1 -f      # Follow logs for worker1
+  openclaw-spawn onboard              # Select instance and run onboard
+  openclaw-spawn gateway -d           # Select instance and start gateway
+  openclaw-spawn list                 # List all instances
+  openclaw-spawn logs worker1 -f      # Follow logs for worker1
 `);
 }
 
@@ -351,7 +351,7 @@ async function proxyOpenClawCommand(args, detach = false) {
     try {
       await execInContainer(instance.container, `openclaw ${command}`, true);
       console.log(chalk.green(`✓ Command started in background`));
-      console.log(chalk.dim(`View logs: openclaw-swarm logs ${instanceName} -f`));
+      console.log(chalk.dim(`View logs: openclaw-spawn logs ${instanceName} -f`));
     } catch (error) {
       console.error(chalk.red(`\n✗ Command failed: ${error.message}`));
       process.exit(1);
@@ -409,7 +409,7 @@ async function browserCommand(name) {
     console.log(chalk.yellow(`⚠ Instance ${instanceName} is stopped. Starting...`));
     startContainer(instance.container);
   } else if (status === 'not-found') {
-    console.error(chalk.red(`✗ Container not found. Run: openclaw-swarm start ${instanceName}`));
+    console.error(chalk.red(`✗ Container not found. Run: openclaw-spawn start ${instanceName}`));
     process.exit(1);
   }
 
@@ -426,9 +426,9 @@ async function browserCommand(name) {
   if (!xvfbAvailable) {
     console.error(chalk.red('\n✗ This container was built without VNC support.'));
     console.error(chalk.yellow('  Rebuild the image and recreate the container:'));
-    console.error(chalk.dim(`\n    openclaw-swarm build`));
-    console.error(chalk.dim(`    openclaw-swarm cleanup`));
-    console.error(chalk.dim(`    openclaw-swarm onboard\n`));
+    console.error(chalk.dim(`\n    openclaw-spawn build`));
+    console.error(chalk.dim(`    openclaw-spawn cleanup`));
+    console.error(chalk.dim(`    openclaw-spawn onboard\n`));
     process.exit(1);
   }
 
@@ -445,7 +445,7 @@ async function browserCommand(name) {
   console.log(chalk.cyan(`   ${vncUrl}`));
   console.log(chalk.dim(`\n   You and the agent share the same Chrome session.`));
   console.log(chalk.dim(`   Log in, solve captchas, or fill credentials — the agent picks it up automatically.`));
-  console.log(chalk.dim(`\n   When done: openclaw-swarm browser stop ${instanceName}\n`));
+  console.log(chalk.dim(`\n   When done: openclaw-spawn browser stop ${instanceName}\n`));
 
   // Auto-open VNC tab
   try {
@@ -611,7 +611,7 @@ async function cleanupCommand() {
 
   // Clear instance configs (but keep directory structure)
   console.log(chalk.dim('Clearing instance configs...'));
-  const instancesDir = path.join(os.homedir(), '.openclaw-swarm', 'instances');
+  const instancesDir = path.join(os.homedir(), '.openclaw-spawn', 'instances');
   try {
     // Remove all files in .openclaw subdirectories
     execSync(`find "${instancesDir}" -mindepth 2 -type f -delete 2>/dev/null || true`, { stdio: 'ignore' });
@@ -625,5 +625,5 @@ async function cleanupCommand() {
   console.log(chalk.dim('Clearing metadata...'));
   removeInstanceMetadata('__all__');  // Will clear in metadata module
   
-  console.log(chalk.green('\n✅ Cleanup complete! Re-add instances with: openclaw-swarm onboard'));
+  console.log(chalk.green('\n✅ Cleanup complete! Re-add instances with: openclaw-spawn onboard'));
 }

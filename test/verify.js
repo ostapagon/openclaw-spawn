@@ -8,7 +8,7 @@ console.log('🧪 Testing OpenClaw Swarm CLI\n');
 // Test 1: List instances
 console.log('1️⃣  Testing list command...');
 try {
-  execSync('openclaw-swarm list', { stdio: 'inherit' });
+  execSync('openclaw-spawn list', { stdio: 'inherit' });
   console.log('✅ List command works\n');
 } catch (error) {
   console.log('❌ List command failed\n');
@@ -52,6 +52,6 @@ try {
 
 console.log('\n🎉 CLI tests complete!');
 console.log('\nTo test interactive commands manually:');
-console.log('  openclaw-swarm onboard    # Run onboarding wizard');
-console.log('  openclaw-swarm gateway    # Start gateway');
-console.log('  openclaw-swarm tui        # Open TUI');
+console.log('  openclaw-spawn onboard    # Run onboarding wizard');
+console.log('  openclaw-spawn gateway    # Start gateway');
+console.log('  openclaw-spawn tui        # Open TUI');

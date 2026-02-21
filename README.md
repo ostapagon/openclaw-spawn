@@ -5,13 +5,13 @@ Docker orchestrator for running multiple [OpenClaw](https://openclaw.ai) instanc
 ## Installation
 
 ```bash
-npm install -g openclaw-swarm
+npm install -g openclaw-spawn
 ```
 
 Or link locally for development:
 ```bash
-git clone https://github.com/yourusername/openclaw-swarm.git
-cd openclaw-swarm
+git clone https://github.com/yourusername/openclaw-spawn.git
+cd openclaw-spawn
 npm install
 npm link
 ```
@@ -23,12 +23,12 @@ f451c93c-534a-4c84-8822-     │ d8b295 │ operat │ 140.82.    │ just   │
 
 1. **Build the Docker base image** (first time only):
 ```bash
-openclaw-swarm build
+openclaw-spawn build
 ```
 
 2. **Run any OpenClaw command** - it will prompt you to select or create an instance:
 ```bash
-openclaw-swarm onboard
+openclaw-spawn onboard
 ```
 
 3. **Select "Add new instance"** and name it (e.g., `worker1`)
@@ -37,7 +37,7 @@ openclaw-swarm onboard
 
 5. **Start the gateway**:
 ```bash
-openclaw-swarm gateway
+openclaw-spawn gateway
 ```
 
 6. **Access the dashboard** at `http://localhost:18789`
@@ -49,34 +49,34 @@ openclaw-swarm gateway
 Any OpenClaw command automatically shows an instance selector:
 
 ```bash
-openclaw-swarm onboard              # Run onboarding wizard
-openclaw-swarm gateway              # Start gateway
-openclaw-swarm tui                  # Open TUI
-openclaw-swarm channels status      # Check channels
-openclaw-swarm devices list         # List devices
-openclaw-swarm devices approve <ID> # Approve a device (pairing)
-openclaw-swarm dashboard            # Open dashboard
+openclaw-spawn onboard              # Run onboarding wizard
+openclaw-spawn gateway              # Start gateway
+openclaw-spawn tui                  # Open TUI
+openclaw-spawn channels status      # Check channels
+openclaw-spawn devices list         # List devices
+openclaw-spawn devices approve <ID> # Approve a device (pairing)
+openclaw-spawn dashboard            # Open dashboard
 ```
 
-**Device pairing (first-time dashboard):** When you open the dashboard URL you'll see "pairing required". Run `openclaw-swarm devices list`, copy the REQUEST_ID, then `openclaw-swarm devices approve <REQUEST_ID>`. Refresh the browser.
+**Device pairing (first-time dashboard):** When you open the dashboard URL you'll see "pairing required". Run `openclaw-spawn devices list`, copy the REQUEST_ID, then `openclaw-spawn devices approve <REQUEST_ID>`. Refresh the browser.
 
 ### Management Commands
 
 ```bash
-openclaw-swarm list                 # List all instances
-openclaw-swarm remove worker1       # Remove an instance
-openclaw-swarm stop worker1         # Stop an instance
-openclaw-swarm start worker1        # Start an instance
-openclaw-swarm logs worker1 -f      # Follow logs
-openclaw-swarm build                # Build Docker image
-openclaw-swarm cleanup              # Remove all containers and reset
+openclaw-spawn list                 # List all instances
+openclaw-spawn remove worker1       # Remove an instance
+openclaw-spawn stop worker1         # Stop an instance
+openclaw-spawn start worker1        # Start an instance
+openclaw-spawn logs worker1 -f      # Follow logs
+openclaw-spawn build                # Build Docker image
+openclaw-spawn cleanup              # Remove all containers and reset
 ```
 
 ## How It Works
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  openclaw-swarm (npm CLI)                           │
+│  openclaw-spawn (npm CLI)                           │
 │  - Manages instance metadata                        │
 │  - Shows interactive selector                       │
 │  - Routes commands to containers                    │
@@ -99,11 +99,11 @@ openclaw-swarm cleanup              # Remove all containers and reset
 - Containers have OpenClaw installed from npm
 - Chromium included for browser automation
 - Isolated configuration and workspace per instance
-- Data stored in `~/.openclaw-swarm/instances/`
+- Data stored in `~/.openclaw-spawn/instances/`
 
-**Port mapping:** Internal port matches external: each instance is assigned a host port (oc-1 → 18789, oc-2 → 19009, …). We map `host_port:host_port` and set OpenClaw’s `gateway.port` to that port so the URL OpenClaw prints is correct. `openclaw-swarm dashboard` also prints the correct URL with token after the command.
+**Port mapping:** Internal port matches external: each instance is assigned a host port (oc-1 → 18789, oc-2 → 19009, …). We map `host_port:host_port` and set OpenClaw’s `gateway.port` to that port so the URL OpenClaw prints is correct. `openclaw-spawn dashboard` also prints the correct URL with token after the command.
 
-**Starting fresh:** To remove all containers and metadata, run `openclaw-swarm cleanup` or `./cleanup.sh`.
+**Starting fresh:** To remove all containers and metadata, run `openclaw-spawn cleanup` or `./cleanup.sh`.
 
 
 ## Features
@@ -119,23 +119,23 @@ openclaw-swarm cleanup              # Remove all containers and reset
 
 ```bash
 # Create and configure first instance
-$ openclaw-swarm onboard
+$ openclaw-spawn onboard
 ? Select instance: ➕ Add new instance
 ? Enter instance name: email-bot
 # ... OpenClaw wizard runs ...
 
 # Start gateway on that instance
-$ openclaw-swarm gateway
+$ openclaw-spawn gateway
 ? Select instance: 🟢 email-bot (port 18789, running)
 ✓ Starting gateway...
 
 # Create another instance
-$ openclaw-swarm onboard
+$ openclaw-spawn onboard
 ? Select instance: ➕ Add new instance
 ? Enter instance name: scraper
 
 # List all instances
-$ openclaw-swarm list
+$ openclaw-spawn list
 📋 OpenClaw Instances:
 
 🟢 email-bot
@@ -151,8 +151,8 @@ $ openclaw-swarm list
 
 ## Data Storage
 
-- **Metadata:** `~/.openclaw-swarm/instances.json`
-- **Instance data:** `~/.openclaw-swarm/instances/<name>/`
+- **Metadata:** `~/.openclaw-spawn/instances.json`
+- **Instance data:** `~/.openclaw-spawn/instances/<name>/`
   - `.openclaw/` - OpenClaw configuration
   - `workspace/` - Instance workspace files
 
@@ -171,7 +171,7 @@ OpenClaw requires device pairing for security. When you first open the dashboard
 
 1. **List pending devices:**
    ```bash
-   openclaw-swarm devices list
+   openclaw-spawn devices list
    ```
    You'll see output like:
    ```
@@ -181,7 +181,7 @@ OpenClaw requires device pairing for security. When you first open the dashboard
 
 2. **Approve the device:**
    ```bash
-   openclaw-swarm devices approve abc123
+   openclaw-spawn devices approve abc123
    ```
    (Use the REQUEST_ID from the first column)
 
@@ -198,34 +198,34 @@ OpenClaw requires device pairing for security. When you first open the dashboard
 ### Build fails
 ```bash
 # Clean and rebuild
-docker rmi openclaw-swarm-base:latest
-openclaw-swarm build
+docker rmi openclaw-spawn-base:latest
+openclaw-spawn build
 ```
 
 ### Instance won't start
 ```bash
 # Check logs
-openclaw-swarm logs instance-name
+openclaw-spawn logs instance-name
 
 # Remove and recreate
-openclaw-swarm remove instance-name
-openclaw-swarm onboard  # Create new one
+openclaw-spawn remove instance-name
+openclaw-spawn onboard  # Create new one
 ```
 
 ## Development
 
 ```bash
 # Clone and setup
-git clone https://github.com/yourusername/openclaw-swarm.git
-cd openclaw-swarm
+git clone https://github.com/yourusername/openclaw-spawn.git
+cd openclaw-spawn
 npm install
 npm link
 
 # Make changes to src/
-# Test with: openclaw-swarm <command>
+# Test with: openclaw-spawn <command>
 
 # Unlink when done
-npm unlink -g openclaw-swarm
+npm unlink -g openclaw-spawn
 ```
 
 ## License

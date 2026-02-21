@@ -5,7 +5,7 @@ package-lock.json
 # Environment
 .env
 
-# Generated/user data (stored in ~/.openclaw-swarm/)
+# Generated/user data (stored in ~/.openclaw-spawn/)
 instances/
 .instances.json
 

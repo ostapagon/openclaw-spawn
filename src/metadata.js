@@ -2,7 +2,7 @@ import os from 'os';
 import path from 'path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 
-const SWARM_DIR = path.join(os.homedir(), '.openclaw-swarm');
+const SWARM_DIR = path.join(os.homedir(), '.openclaw-spawn');
 const METADATA_FILE = path.join(SWARM_DIR, 'instances.json');
 const INSTANCES_DIR = path.join(SWARM_DIR, 'instances');
 

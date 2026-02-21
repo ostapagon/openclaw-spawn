@@ -25,7 +25,7 @@ export function isDockerInstalled() {
 // Check if our base image already exists (skip rebuild if so)
 export function imageExists() {
   try {
-    const out = execSync('docker images -q openclaw-swarm-base:latest', { encoding: 'utf8' }).trim();
+    const out = execSync('docker images -q openclaw-spawn-base:latest', { encoding: 'utf8' }).trim();
     return out.length > 0;
   } catch {
     return false;
@@ -77,7 +77,7 @@ export function createContainer(name, port) {
     '-v', `/var/run/docker.sock:/var/run/docker.sock`,
     '--network', 'openclaw-network',
     '--shm-size', '1g',              // Chrome needs more than the default 64MB for multiple tabs
-    'openclaw-swarm-base:latest'
+    'openclaw-spawn-base:latest'
     // No CMD override — Dockerfile CMD runs: Xvfb :99 ... & tail -f /dev/null
   ];
   
@@ -186,7 +186,7 @@ export function showLogs(containerName, follow = false) {
 // Build base image
 export function buildBaseImage() {
   try {
-    execSync('docker build -t openclaw-swarm-base:latest .', { 
+    execSync('docker build -t openclaw-spawn-base:latest .', { 
       stdio: 'inherit',
       cwd: process.cwd()
     });
