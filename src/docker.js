@@ -69,11 +69,12 @@ export function createContainer(name, port) {
     '-e', 'HOME=/home/node',
     '-e', 'PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright',
     '-p', `${port}:${port}`,                    // Gateway port
-    '-p', `${port + 2}:18791`,                  // Browser control service (gateway + 2)
+    '-p', `${port + 2}:${port + 2}`,              // Browser control service (gateway.port + 2)
     '-p', `${port + 11}:18800`,                 // Chrome CDP port
     '-p', `${port + 20}:6080`,                  // noVNC browser view
     '-v', `${instanceDir}/.openclaw:/home/node/.openclaw`,
     '-v', `${instanceDir}/workspace:/workspace`,
+    '-v', `/var/run/docker.sock:/var/run/docker.sock`,
     '--network', 'openclaw-network',
     '--shm-size', '1g',              // Chrome needs more than the default 64MB for multiple tabs
     'openclaw-swarm-base:latest'
