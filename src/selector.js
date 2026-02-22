@@ -1,6 +1,11 @@
 import inquirer from 'inquirer';
+import * as clack from '@clack/prompts';
+import chalk from 'chalk';
 import { getInstances } from './metadata.js';
 import { getContainerStatus } from './docker.js';
+
+// Lobster accent color — matches openclaw's theme
+const accent = (s) => chalk.hex('#FF5A2D')(s);
 
 // Show instance selector
 export async function selectInstance(allowAddNew = true) {
@@ -69,4 +74,14 @@ export async function confirm(message) {
   }]);
   
   return answer.confirmed;
+}
+
+// Confirm action styled for the init wizard using @clack/prompts
+export async function wizardConfirm(message) {
+  const result = await clack.confirm({ message: accent(message), initialValue: true });
+  if (clack.isCancel(result)) {
+    clack.cancel('Setup cancelled.');
+    process.exit(0);
+  }
+  return result;
 }

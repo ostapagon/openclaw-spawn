@@ -8,6 +8,7 @@ import {
   addInstance,
   removeInstance as removeInstanceMetadata,
   getNextPort,
+  getNextFreePort,
   getInstanceGatewayToken,
   setInstanceGatewayPort,
   enableBrowserTool,
@@ -30,7 +31,8 @@ import {
   startVisibleChrome,
   stopVisibleChrome
 } from './docker.js';
-import { selectInstance, promptInstanceName, confirm } from './selector.js';
+import * as clack from '@clack/prompts';
+import { selectInstance, promptInstanceName, confirm, wizardConfirm } from './selector.js';
 
 // Management commands handled by openclaw-spawn itself
 const MANAGEMENT_COMMANDS = ['list', 'remove', 'stop', 'start', 'logs', 'build', 'cleanup'];
@@ -115,39 +117,72 @@ export async function cli(args) {
 
 // Smart first-time setup wizard
 async function initCommand() {
-  console.log(chalk.blue.bold('\n🦞 OpenClaw Swarm — Setup Wizard\n'));
+  clack.intro(chalk.bold.hex('#FF5A2D')('🦞 OpenClaw Spawn — Setup Wizard'));
 
   // ── Step 1: Docker installed? ─────────────────────────────────────────────
-  console.log(chalk.bold('Step 1/5  Check Docker is installed'));
+  console.log(chalk.bold('\nStep 1/5  Check Docker is installed'));
   if (!isDockerInstalled()) {
-    console.log(chalk.yellow('  Docker not found. Installing...\n'));
+    const hasBrew = process.platform === 'darwin'
+      ? (() => { try { execSync('which brew', { stdio: 'ignore' }); return true; } catch { return false; } })()
+      : true;
+    const installMsg = process.platform === 'darwin' && !hasBrew
+      ? 'Install Homebrew + Docker Desktop now?'
+      : 'Install Docker now?';
+    console.log(chalk.yellow('  Docker not found.'));
+    const installDocker = await wizardConfirm(installMsg);
+    if (!installDocker) {
+      clack.outro(chalk.yellow('Install Docker manually and re-run: openclaw-spawn init'));
+      process.exit(0);
+    }
+    console.log(chalk.dim('  Installing Docker...\n'));
     try {
       if (process.platform === 'darwin') {
-        // Check for Homebrew
-        try {
-          execSync('which brew', { stdio: 'ignore' });
-        } catch {
-          console.log(chalk.red('  Homebrew is required to auto-install Docker on macOS.'));
-          console.log(chalk.yellow('  Install Homebrew first: https://brew.sh'));
+        // Install Homebrew if missing
+        if (!hasBrew) {
+          console.log(chalk.dim('  Installing Homebrew...'));
+          execSync('/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"', { stdio: 'inherit' });
+          // Add Homebrew to PATH for this process (Apple Silicon: /opt/homebrew, Intel: /usr/local)
+          for (const p of ['/opt/homebrew/bin', '/usr/local/bin']) {
+            if (!process.env.PATH?.includes(p)) process.env.PATH = `${p}:${process.env.PATH}`;
+          }
+          console.log(chalk.green('  ✓ Homebrew installed\n'));
+        }
+        execSync('brew install --cask docker-desktop', { stdio: 'inherit' });
+      } else if (process.platform === 'linux') {
+        // Detect package manager
+        const hasPkg = (cmd) => { try { execSync(`which ${cmd}`, { stdio: 'ignore' }); return true; } catch { return false; } };
+        if (hasPkg('apt-get')) {
+          execSync('sudo apt-get update && sudo apt-get install -y docker.io', { stdio: 'inherit' });
+        } else if (hasPkg('dnf')) {
+          execSync('sudo dnf install -y docker', { stdio: 'inherit' });
+        } else if (hasPkg('yum')) {
+          execSync('sudo yum install -y docker', { stdio: 'inherit' });
+        } else if (hasPkg('pacman')) {
+          execSync('sudo pacman -Sy --noconfirm docker', { stdio: 'inherit' });
+        } else if (hasPkg('zypper')) {
+          execSync('sudo zypper install -y docker', { stdio: 'inherit' });
+        } else {
+          console.error(chalk.red('  ✗ No supported package manager found (apt, dnf, yum, pacman, zypper).'));
+          console.log(chalk.yellow('  Install Docker manually: https://docs.docker.com/engine/install/'));
+          process.exit(1);
+        }
+        execSync('sudo systemctl start docker && sudo systemctl enable docker', { stdio: 'inherit' });
+        // Add current user to docker group so sudo isn't needed
+        try { execSync(`sudo usermod -aG docker ${process.env.USER || process.env.LOGNAME}`, { stdio: 'ignore' }); } catch {}
+        console.log(chalk.dim('  Note: log out and back in (or run `newgrp docker`) for group change to take effect.'));
+      } else if (process.platform === 'win32') {
+        // Try winget (built into Windows 10/11)
+        const hasWinget = (() => { try { execSync('winget --version', { stdio: 'ignore', shell: 'cmd.exe' }); return true; } catch { return false; } })();
+        if (hasWinget) {
+          console.log(chalk.dim('  Installing Docker Desktop via winget...\n'));
+          execSync('winget install -e --id Docker.DockerDesktop --accept-source-agreements --accept-package-agreements', { stdio: 'inherit', shell: 'cmd.exe' });
+          console.log(chalk.yellow('\n  Docker Desktop installed. Please restart your machine, then re-run: openclaw-spawn init'));
+          process.exit(0);
+        } else {
+          console.log(chalk.yellow('  Download Docker Desktop: https://docs.docker.com/desktop/windows/'));
           console.log(chalk.yellow('  Then re-run: openclaw-spawn init\n'));
           process.exit(1);
         }
-        execSync('brew install --cask docker', { stdio: 'inherit' });
-      } else if (process.platform === 'linux') {
-        // Try apt, fall back to yum
-        try {
-          execSync('which apt-get', { stdio: 'ignore' });
-          execSync('sudo apt-get update && sudo apt-get install -y docker.io', { stdio: 'inherit' });
-          execSync('sudo systemctl start docker && sudo systemctl enable docker', { stdio: 'inherit' });
-        } catch {
-          execSync('sudo yum install -y docker', { stdio: 'inherit' });
-          execSync('sudo systemctl start docker && sudo systemctl enable docker', { stdio: 'inherit' });
-        }
-      } else {
-        console.log(chalk.yellow('  Auto-install is not supported on Windows.'));
-        console.log(chalk.yellow('  Download Docker Desktop: https://docs.docker.com/desktop/windows/'));
-        console.log(chalk.yellow('  Then re-run: openclaw-spawn init\n'));
-        process.exit(1);
       }
       console.log(chalk.green('  ✓ Docker installed\n'));
     } catch (err) {
@@ -167,7 +202,15 @@ async function initCommand() {
     } else if (process.platform === 'linux') {
       try { execSync('sudo systemctl start docker', { stdio: 'ignore' }); } catch {}
     } else if (process.platform === 'win32') {
-      try { execSync('start "" "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"', { stdio: 'ignore' }); } catch {}
+      const dockerPaths = [
+        `${process.env.ProgramFiles}\\Docker\\Docker\\Docker Desktop.exe`,
+        `${process.env.LOCALAPPDATA}\\Docker\\Docker Desktop.exe`,
+        'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe',
+      ];
+      const dockerExe = dockerPaths.find(p => {
+        try { execSync(`if exist "${p}" echo yes`, { stdio: 'pipe', shell: 'cmd.exe' }); return true; } catch { return false; }
+      }) ?? dockerPaths[2];
+      try { execSync(`start "" "${dockerExe}"`, { stdio: 'ignore', shell: 'cmd.exe' }); } catch {}
     }
     // Poll until Docker is ready (up to 60s)
     let ready = false;
@@ -189,7 +232,12 @@ async function initCommand() {
   if (imageExists()) {
     console.log(chalk.green('  ✓ Image already built, skipping\n'));
   } else {
-    console.log(chalk.dim('  Building openclaw-spawn-base:latest (this takes a few minutes the first time)...\n'));
+    const buildImage = await wizardConfirm('Build the base Docker image now? (takes a few minutes the first time)');
+    if (!buildImage) {
+      clack.outro(chalk.yellow('Skipped. Run: openclaw-spawn build'));
+      process.exit(0);
+    }
+    console.log(chalk.dim('  Building openclaw-spawn-base:latest...\n'));
     const ok = buildBaseImage();
     if (!ok) {
       console.error(chalk.red('  ✗ Image build failed'));
@@ -200,10 +248,15 @@ async function initCommand() {
 
   // ── Step 4: Onboard new instance ─────────────────────────────────────────
   console.log(chalk.bold('Step 4/5  Set up OpenClaw instance'));
+  const setupInstance = await wizardConfirm('Create and onboard a new OpenClaw instance now?');
+  if (!setupInstance) {
+    clack.outro(chalk.yellow('Skipped. Run: openclaw-spawn onboard'));
+    process.exit(0);
+  }
   ensureNetwork();
   console.log(chalk.dim('  Running OpenClaw onboarding wizard...\n'));
   const instanceName = await promptInstanceName();
-  const port = getNextPort();
+  const port = await getNextFreePort();
   console.log(chalk.blue(`\n  Creating instance ${instanceName} on port ${port}...`));
   addInstance(instanceName, port);
   const created = createContainer(instanceName, port);
@@ -220,6 +273,11 @@ async function initCommand() {
 
   // ── Step 5: Start gateway ─────────────────────────────────────────────────
   console.log(chalk.bold('Step 5/5  Start gateway'));
+  const startGateway = await wizardConfirm('Start the OpenClaw gateway now?');
+  if (!startGateway) {
+    clack.outro(chalk.green.bold('✓ OpenClaw Spawn is ready! Run: openclaw-spawn gateway'));
+    process.exit(0);
+  }
   const inst = getInstance(instanceName);
 
   // Bootstrap Chrome then start gateway
@@ -232,7 +290,7 @@ async function initCommand() {
   console.log(chalk.green('  ✓ Gateway started\n'));
 
   // ── Done ──────────────────────────────────────────────────────────────────
-  console.log(chalk.green.bold('✓ OpenClaw Swarm is ready!\n'));
+  clack.outro(chalk.green.bold('✓ OpenClaw Spawn is ready!'));
   console.log(chalk.blue('Next steps:'));
   console.log(chalk.cyan(`  openclaw-spawn tui`) + chalk.dim('              # chat with your agent'));
   console.log(chalk.cyan(`  openclaw-spawn browser`) + chalk.dim('          # open VNC to see/control the browser'));
@@ -242,7 +300,7 @@ async function initCommand() {
 // Show help
 function showHelp() {
   console.log(`
-${chalk.blue.bold('OpenClaw Swarm')} - Docker orchestrator for multiple OpenClaw instances
+${chalk.blue.bold('OpenClaw Spawn')} - Docker orchestrator for multiple OpenClaw instances
 
 ${chalk.yellow('Usage:')}
   openclaw-spawn <command> [options]
@@ -288,7 +346,7 @@ async function proxyOpenClawCommand(args, detach = false) {
   let instanceName;
   if (selected === '__new__') {
     instanceName = await promptInstanceName();
-    const port = getNextPort();
+    const port = await getNextFreePort();
     
     console.log(chalk.blue(`\n📦 Creating instance ${instanceName} on port ${port}...`));
     
@@ -589,7 +647,7 @@ async function cleanupCommand() {
     return;
   }
 
-  console.log(chalk.blue('🧹 Cleaning up OpenClaw Swarm...\n'));
+  console.log(chalk.blue('🧹 Cleaning up OpenClaw Spawn...\n'));
 
   // Get all instances
   const instances = getInstances();

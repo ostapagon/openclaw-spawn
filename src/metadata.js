@@ -1,5 +1,6 @@
 import os from 'os';
 import path from 'path';
+import net from 'net';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 
 const SWARM_DIR = path.join(os.homedir(), '.openclaw-spawn');
@@ -76,10 +77,37 @@ export function removeInstance(name) {
   writeMetadata(data);
 }
 
-// Get next available port
+// Get next available port (from metadata only, no system check)
 export function getNextPort() {
   const data = readMetadata();
   return data.nextPort;
+}
+
+// Check if a single TCP port is free on the host
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => server.close(() => resolve(true)));
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+// Find next port base where all 4 required host ports are free:
+//   base, base+2 (browser control), base+11 (CDP), base+20 (noVNC)
+export async function getNextFreePort() {
+  const data = readMetadata();
+  let port = data.nextPort;
+  while (true) {
+    const [p0, p2, p11, p20] = await Promise.all([
+      isPortFree(port),
+      isPortFree(port + 2),
+      isPortFree(port + 11),
+      isPortFree(port + 20),
+    ]);
+    if (p0 && p2 && p11 && p20) return port;
+    port++;
+  }
 }
 
 // Get instance directory
