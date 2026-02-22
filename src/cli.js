@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 import { execSync, spawnSync } from 'child_process';
 import {
   getInstances,
@@ -29,10 +30,11 @@ import {
   ensureNetwork,
   startVnc,
   startVisibleChrome,
-  stopVisibleChrome
+  stopVisibleChrome,
+  sleepSync
 } from './docker.js';
 import * as clack from '@clack/prompts';
-import { selectInstance, promptInstanceName, confirm, wizardConfirm } from './selector.js';
+import { selectInstance, promptInstanceName, wizardConfirm } from './selector.js';
 
 // Management commands handled by openclaw-spawn itself
 const MANAGEMENT_COMMANDS = ['list', 'remove', 'stop', 'start', 'logs', 'build', 'cleanup'];
@@ -286,7 +288,7 @@ async function initCommand() {
   enableBrowserTakeover(instanceName);
   setInstanceGatewayPort(instanceName, inst.port);
   await execInContainer(inst.container, 'openclaw gateway --bind lan', true);
-  execSync('sleep 2', { stdio: 'ignore' });
+  sleepSync(2);
   console.log(chalk.green('  ✓ Gateway started\n'));
 
   // ── Done ──────────────────────────────────────────────────────────────────
@@ -506,9 +508,16 @@ async function browserCommand(name) {
   console.log(chalk.dim(`\n   When done: openclaw-spawn browser stop ${instanceName}\n`));
 
   // Auto-open VNC tab
+  // On Windows, `start "url"` treats the first quoted arg as the window title and opens a terminal.
+  // The fix is `start "" "url"` — empty string as title, then the URL.
   try {
-    const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-    execSync(`${openCmd} "${vncUrl}"`, { stdio: 'ignore' });
+    if (process.platform === 'win32') {
+      execSync(`start "" "${vncUrl}"`, { stdio: 'ignore', shell: true });
+    } else if (process.platform === 'darwin') {
+      execSync(`open "${vncUrl}"`, { stdio: 'ignore' });
+    } else {
+      execSync(`xdg-open "${vncUrl}"`, { stdio: 'ignore' });
+    }
   } catch {}
 }
 
@@ -576,7 +585,7 @@ async function removeInstanceCommand(name) {
     process.exit(1);
   }
   
-  const confirmed = await confirm(`Remove instance ${name}? This will delete all data.`);
+  const confirmed = await wizardConfirm(`Remove instance ${name}? This will delete all data.`);
   if (!confirmed) {
     console.log(chalk.yellow('Cancelled'));
     return;
@@ -641,7 +650,7 @@ async function buildCommand() {
 
 // Cleanup - remove all containers and reset metadata
 async function cleanupCommand() {
-  const confirmed = await confirm('Remove all OpenClaw instances and reset metadata?');
+  const confirmed = await wizardConfirm('Remove all OpenClaw instances and reset metadata?');
   if (!confirmed) {
     console.log(chalk.yellow('Cancelled'));
     return;
@@ -671,11 +680,16 @@ async function cleanupCommand() {
   console.log(chalk.dim('Clearing instance configs...'));
   const instancesDir = path.join(os.homedir(), '.openclaw-spawn', 'instances');
   try {
-    // Remove all files in .openclaw subdirectories
-    execSync(`find "${instancesDir}" -mindepth 2 -type f -delete 2>/dev/null || true`, { stdio: 'ignore' });
-    // Remove empty subdirectories
-    execSync(`find "${instancesDir}" -mindepth 2 -type d -empty -delete 2>/dev/null || true`, { stdio: 'ignore' });
-  } catch (error) {
+    if (fs.existsSync(instancesDir)) {
+      for (const instance of fs.readdirSync(instancesDir)) {
+        const instancePath = path.join(instancesDir, instance);
+        if (fs.statSync(instancePath).isDirectory()) {
+          fs.rmSync(instancePath, { recursive: true, force: true });
+          fs.mkdirSync(instancePath, { recursive: true });
+        }
+      }
+    }
+  } catch {
     // Ignore errors (directory might not exist)
   }
 

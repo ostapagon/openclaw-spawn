@@ -1,6 +1,11 @@
 import { execSync, spawn, spawnSync } from 'child_process';
 import { getInstanceDir } from './metadata.js';
 
+// Cross-platform synchronous sleep (Atomics.wait works on the Node.js main thread)
+export function sleepSync(seconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.round(seconds * 1000));
+}
+
 // Check if Docker is running
 export function isDockerRunning() {
   try {
@@ -205,13 +210,13 @@ export function startVnc(containerName) {
       `docker exec -d ${containerName} sh -c "pgrep -x x11vnc > /dev/null || x11vnc -display :99 -forever -nopw -rfbport 5900 -quiet"`,
       { stdio: 'ignore' }
     );
-    execSync('sleep 1', { stdio: 'ignore' });
+    sleepSync(1);
     // Kill any existing websockify first so we only ever have one instance on port 6080.
     // Use spawnSync with explicit argv — avoids shell interpretation and pkill self-kill issues.
     spawnSync('docker', ['exec', containerName, 'pkill', '-f', 'websockify'], { stdio: 'pipe' });
-    execSync('sleep 0.5', { stdio: 'ignore' });
+    sleepSync(0.5);
     spawnSync('docker', ['exec', '-d', containerName, 'websockify', '--web', '/usr/share/novnc', '6080', 'localhost:5900'], { stdio: 'pipe' });
-    execSync('sleep 1', { stdio: 'ignore' });
+    sleepSync(1);
     return true;
   } catch (error) {
     console.error('Failed to start VNC:', error.message);
@@ -244,7 +249,7 @@ export function startVisibleChrome(containerName, cdpPort) {
       { stdio: 'ignore' }
     );
     // Give Chrome 3 seconds to start and expose its CDP port
-    execSync('sleep 3', { stdio: 'ignore' });
+    sleepSync(3);
     return true;
   } catch (error) {
     console.error('Failed to start Chrome:', error.message);
