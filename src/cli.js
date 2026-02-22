@@ -34,7 +34,7 @@ import {
   sleepSync
 } from './docker.js';
 import * as clack from '@clack/prompts';
-import { selectInstance, promptInstanceName, wizardConfirm } from './selector.js';
+import { selectInstance, promptInstanceName, promptFolderMount, wizardConfirm } from './selector.js';
 
 // Management commands handled by openclaw-spawn itself
 const MANAGEMENT_COMMANDS = ['list', 'remove', 'stop', 'start', 'logs', 'build', 'cleanup'];
@@ -258,10 +258,31 @@ async function initCommand() {
   ensureNetwork();
   console.log(chalk.dim('  Running OpenClaw onboarding wizard...\n'));
   const instanceName = await promptInstanceName();
+
+  // Optional: share host folders with the agent
+  const mounts = [];
+  const wantMount = await wizardConfirm('Mount a host folder so the agent can access your files?');
+  if (wantMount) {
+    if (process.platform === 'darwin') {
+      console.log(chalk.dim(
+        '\n  Note: if the path is outside /Users, add it to Docker Desktop\'s file sharing list.\n' +
+        '  (Docker Desktop → Settings → Resources → File Sharing)\n'
+      ));
+    }
+    let addAnother = true;
+    while (addAnother) {
+      const mount = await promptFolderMount();
+      mounts.push(mount);
+      const modeLabel = mount.mode === 'ro' ? 'read-only' : 'read/write';
+      console.log(chalk.green(`  ✓ ${mount.host}  →  ${mount.container}  (${modeLabel})`));
+      addAnother = await wizardConfirm('Add another folder?', false);
+    }
+  }
+
   const port = await getNextFreePort();
   console.log(chalk.blue(`\n  Creating instance ${instanceName} on port ${port}...`));
-  addInstance(instanceName, port);
-  const created = createContainer(instanceName, port);
+  addInstance(instanceName, port, mounts);
+  const created = createContainer(instanceName, port, mounts);
   if (!created) {
     console.error(chalk.red('  ✗ Failed to create container'));
     removeInstanceMetadata(instanceName);
@@ -271,6 +292,7 @@ async function initCommand() {
   await execInContainer(instance.container, 'openclaw onboard', false);
   setInstanceGatewayPort(instanceName, instance.port);
   enableBrowserTool(instanceName);
+
   console.log(chalk.green(`\n  ✓ Instance ${instanceName} ready\n`));
 
   // ── Step 5: Start gateway ─────────────────────────────────────────────────
@@ -378,7 +400,7 @@ async function proxyOpenClawCommand(args, detach = false) {
       startContainer(instance.container);
     } else if (status === 'not-found') {
       console.log(chalk.yellow(`⚠ Container not found. Recreating...`));
-      createContainer(instanceName, instance.port);
+      createContainer(instanceName, instance.port, instance.mounts ?? []);
     }
   }
   

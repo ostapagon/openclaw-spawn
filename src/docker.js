@@ -63,36 +63,47 @@ export function getContainerStatus(containerName) {
 }
 
 // Create and start container
-export function createContainer(name, port) {
+// mounts: array of { host: string, container: string, mode: 'rw'|'ro' }
+export function createContainer(name, port, mounts = []) {
   const instanceDir = getInstanceDir(name);
   const containerName = `openclaw-${name}`;
-  
-  const cmd = [
-    'docker', 'run',
+
+  const args = [
+    'run',
     '-d',
     '--name', containerName,
     '-e', 'HOME=/home/node',
     '-e', 'PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright',
-    '-p', `${port}:${port}`,                    // Gateway port
-    '-p', `${port + 2}:${port + 2}`,              // Browser control service (gateway.port + 2)
-    '-p', `${port + 11}:18800`,                 // Chrome CDP port
-    '-p', `${port + 20}:6080`,                  // noVNC browser view
+    '-p', `${port}:${port}`,
+    '-p', `${port + 2}:${port + 2}`,
+    '-p', `${port + 11}:18800`,
+    '-p', `${port + 20}:6080`,
     '-v', `${instanceDir}/.openclaw:/home/node/.openclaw`,
     '-v', `${instanceDir}/workspace:/workspace`,
     '-v', `/var/run/docker.sock:/var/run/docker.sock`,
+  ];
+
+  // User-supplied bind mounts — normalise backslashes for Docker on Windows
+  for (const m of mounts) {
+    const hostPath = m.host.replace(/\\/g, '/');
+    args.push('-v', `${hostPath}:${m.container}${m.mode === 'ro' ? ':ro' : ''}`);
+  }
+
+  args.push(
     '--network', 'openclaw-network',
-    '--shm-size', '1g',              // Chrome needs more than the default 64MB for multiple tabs
+    '--shm-size', '1g',
     'openclaw-spawn-base:latest'
     // No CMD override — Dockerfile CMD runs: Xvfb :99 ... & tail -f /dev/null
-  ];
-  
-  try {
-    execSync(cmd.join(' '), { stdio: 'inherit' });
-    return true;
-  } catch (error) {
-    console.error('Failed to create container:', error.message);
+  );
+
+  // Use spawnSync with an explicit argv array so paths with spaces are handled correctly
+  // on all platforms (execSync + string join breaks on e.g. "C:\Users\John Doe\...").
+  const result = spawnSync('docker', args, { stdio: 'inherit', shell: false });
+  if (result.error || result.status !== 0) {
+    console.error('Failed to create container:', result.error?.message ?? `exit code ${result.status}`);
     return false;
   }
+  return true;
 }
 
 // Execute command in container (interactive)

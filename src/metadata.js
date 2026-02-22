@@ -45,13 +45,15 @@ export function getInstance(name) {
 }
 
 // Add instance
-export function addInstance(name, port) {
+// mounts: array of { host, container, mode } — persisted so restarts replay the same bind mounts
+export function addInstance(name, port, mounts = []) {
   const data = readMetadata();
   data.instances[name] = {
     container: `openclaw-${name}`,
     port,
     created: new Date().toISOString(),
-    status: 'created'
+    status: 'created',
+    mounts,
   };
   data.nextPort = port + 220;
   writeMetadata(data);
@@ -60,6 +62,14 @@ export function addInstance(name, port) {
   const instanceDir = path.join(INSTANCES_DIR, name);
   mkdirSync(path.join(instanceDir, '.openclaw'), { recursive: true });
   mkdirSync(path.join(instanceDir, 'workspace'), { recursive: true });
+
+  // Pre-create .openclaw/workspace so OpenClaw can write AGENTS.md and similar files.
+  // Must be created by Node.js here (not by the Docker daemon) — Docker creates
+  // intermediate bind-mount directories as root, which breaks writes by the node user.
+  mkdirSync(path.join(instanceDir, '.openclaw', 'workspace'), { recursive: true });
+  if (mounts.length > 0) {
+    mkdirSync(path.join(instanceDir, '.openclaw', 'workspace', 'user_shared'), { recursive: true });
+  }
   
   return data.instances[name];
 }

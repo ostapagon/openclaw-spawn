@@ -1,6 +1,8 @@
 import inquirer from 'inquirer';
 import * as clack from '@clack/prompts';
 import chalk from 'chalk';
+import path from 'path';
+import { existsSync } from 'fs';
 import { getInstances } from './metadata.js';
 import { getContainerStatus } from './docker.js';
 
@@ -76,9 +78,44 @@ export async function confirm(message) {
   return answer.confirmed;
 }
 
+// Prompt for a single host→container folder mount entry.
+// Returns { host, container, mode } where container is /workspace/<basename>.
+export async function promptFolderMount() {
+  const { rawPath } = await inquirer.prompt([{
+    type: 'input',
+    name: 'rawPath',
+    message: 'Absolute path to the host folder you want to share:',
+    validate: (input) => {
+      if (!input.trim()) return 'Path cannot be empty';
+      const resolved = path.resolve(input.trim());
+      if (!existsSync(resolved)) return `Path does not exist: ${resolved}`;
+      return true;
+    }
+  }]);
+
+  const { mode } = await inquirer.prompt([{
+    type: 'list',
+    name: 'mode',
+    message: 'Access mode inside the container:',
+    choices: [
+      { name: 'Read/Write  — agent can read and edit files', value: 'rw' },
+      { name: 'Read-only   — agent can only read files',     value: 'ro' },
+    ],
+    default: 'rw'
+  }]);
+
+  const resolved = path.resolve(rawPath.trim());
+  const folderName = path.basename(resolved);
+  return {
+    host: resolved,
+    container: `/home/node/.openclaw/workspace/user_shared/${folderName}`,
+    mode,
+  };
+}
+
 // Confirm action styled for the init wizard using @clack/prompts
-export async function wizardConfirm(message) {
-  const result = await clack.confirm({ message: accent(message), initialValue: true });
+export async function wizardConfirm(message, defaultValue = true) {
+  const result = await clack.confirm({ message: accent(message), initialValue: defaultValue });
   if (clack.isCancel(result)) {
     clack.cancel('Setup cancelled.');
     process.exit(0);
