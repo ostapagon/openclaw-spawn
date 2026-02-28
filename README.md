@@ -2,6 +2,17 @@
 
 Run multiple [OpenClaw](https://openclaw.ai) AI agents in isolated Docker containers — each with its own browser, workspace, and gateway.
 
+<p align="center">
+  <img src="openclaw_spawn_logo.png" width="473" alt="openclaw-spawn logo" />
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/openclaw-spawn"><img src="https://img.shields.io/npm/v/openclaw-spawn" alt="npm version" /></a>
+  <a href="https://github.com/ostapagon/openclaw-spawn/stargazers"><img src="https://img.shields.io/github/stars/ostapagon/openclaw-spawn" alt="GitHub stars" /></a>
+  <a href="https://www.npmjs.com/package/openclaw-spawn"><img src="https://img.shields.io/npm/dt/openclaw-spawn" alt="npm total downloads" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/npm/l/openclaw-spawn" alt="License" /></a>
+</p>
+
 ```bash
 npm install -g openclaw-spawn
 openclaw-spawn init
